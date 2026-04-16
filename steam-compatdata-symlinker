@@ -120,12 +120,80 @@ lnfn(){
 
 usage(){
 	echo "Usage: $0 [ \"steamapps directory\" ]"
+	echo "       $0 -a  (auto-detect steamapps directories using fd)"
 	echo "This will automatically make symlinks for all directories in the supplied /steamapps/compatdata/ directory."
 	echo "This makes it easier to find the right compatdata directory without needing to look up the game's Steam ID."
 	echo "Run this script again to create symlinks for new game installs, and clean up old uninstalls."
 	echo "This script will also check for unused compatdata, shadercache, and common directories, left behind from uninstalls and moved installs."
 	echo "-h for this dialog."
 	echo "-e for a longer explanation on these unused directories."
+	echo "-a auto-detect steamapps directories (requires fd)."
+}
+
+autodetect(){
+	if ! command -v fd &>/dev/null; then
+		echo "ERROR: fd is not installed. Install it to use auto-detect mode."
+		echo "  Arch: sudo pacman -S fd"
+		echo "  Ubuntu/Debian: sudo apt install fd-find"
+		exit 1
+	fi
+
+	echo "Searching for steamapps directories..."
+	echo
+
+	steamapps_dirs=()
+	while IFS= read -r dir; do
+		if [[ -d "$dir/compatdata" ]] && [[ -d "$dir/common" ]]; then
+			steamapps_dirs+=("$dir")
+		fi
+	done < <(fd -t d -H '^steamapps$' / 2>/dev/null | while IFS= read -r d; do
+		realpath "$d" 2>/dev/null
+	done | sort -u)
+
+	if [[ ${#steamapps_dirs[@]} -eq 0 ]]; then
+		echo "No steamapps directories found."
+		exit 1
+	fi
+
+	echo "Found ${#steamapps_dirs[@]} steamapps directory(s):"
+	echo "--------------------------------"
+	for i in "${!steamapps_dirs[@]}"; do
+		echo "  $((i+1)). ${steamapps_dirs[$i]}"
+	done
+	echo "--------------------------------"
+	echo
+	echo "Process all of them? [ y / n / numbers separated by spaces (e.g. \"1 3\") ]"
+	read -e input
+
+	selected_dirs=()
+	if [[ "${input,,}" == "y"* ]]; then
+		selected_dirs=("${steamapps_dirs[@]}")
+	elif [[ "${input,,}" == "n"* ]]; then
+		echo "Canceled!"
+		exit 0
+	else
+		for num in $input; do
+			if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= ${#steamapps_dirs[@]} )); then
+				selected_dirs+=("${steamapps_dirs[$((num-1))]}")
+			else
+				echo "Invalid selection: $num. Skipping."
+			fi
+		done
+		if [[ ${#selected_dirs[@]} -eq 0 ]]; then
+			echo "No valid directories selected. Exiting."
+			exit 1
+		fi
+	fi
+
+	echo
+	for dir in "${selected_dirs[@]}"; do
+		echo "==============================="
+		echo "Processing: $dir"
+		echo "==============================="
+		echo
+		"$0" "$dir"
+		echo
+	done
 }
 
 longexplain(){
@@ -147,7 +215,7 @@ longexplain(){
 }
 
 if (( $# >= 1 )); then
-	while getopts "he" OPTION; do
+	while getopts "hea" OPTION; do
 		case "${OPTION}" in
 			h)
 				usage
@@ -155,6 +223,10 @@ if (( $# >= 1 )); then
 				;;
 			e)
 				longexplain
+				exit
+				;;
+			a)
+				autodetect
 				exit
 				;;
 			\?)
@@ -204,6 +276,25 @@ if (( $# >= 1 )); then
 			echo "$asdf"
 			echo "--------------------------------"
 			echo
+			echo "Delete these broken symlinks? [ y / n ]"
+			read -e input
+			if [[ "${input,,}" == "y"* ]]; then
+				deletecount=0
+				while IFS= read -r brokenlink; do
+					if [[ -n "$brokenlink" ]]; then
+						if rm -f -- "$brokenlink"; then
+							deletecount=$(( deletecount + 1 ))
+						else
+							echo "ERROR: Failed to delete: $brokenlink"
+						fi
+					fi
+				done <<< "$asdf"
+				echo "$deletecount broken symlink(s) deleted."
+				echo
+			else
+				echo "Skipped deleting broken symlinks."
+				echo
+			fi
 		fi
 
 		unaccountedfound=0
