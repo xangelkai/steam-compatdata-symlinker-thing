@@ -131,28 +131,59 @@ usage(){
 }
 
 autodetect(){
-	if ! command -v fd &>/dev/null; then
-		echo "ERROR: fd is not installed. Install it to use auto-detect mode."
-		echo "  Arch: sudo pacman -S fd"
-		echo "  Ubuntu/Debian: sudo apt install fd-find"
-		exit 1
-	fi
-
-	echo "Searching for steamapps directories..."
-	echo
+	local cache_file="${XDG_CACHE_HOME:-$HOME/.cache}/steam-compatdata-symlinker-dirs"
 
 	steamapps_dirs=()
-	while IFS= read -r dir; do
-		if [[ -d "$dir/compatdata" ]] && [[ -d "$dir/common" ]]; then
-			steamapps_dirs+=("$dir")
+
+	if [[ -f "$cache_file" ]] && [[ -s "$cache_file" ]]; then
+		echo "Previously found steamapps directories ($(wc -l < "$cache_file") entries, saved $(date -r "$cache_file" "+%Y-%m-%d %H:%M")):"
+		echo "--------------------------------"
+		local i=1
+		while IFS= read -r line; do
+			echo "  $i. $line"
+			(( i++ ))
+		done < "$cache_file"
+		echo "--------------------------------"
+		echo
+		echo "Use these cached directories, or search again? [ cached / search ]"
+		read -e cache_input
+		if [[ "${cache_input,,}" == "s"* ]]; then
+			: # fall through to search below
+		else
+			while IFS= read -r line; do
+				steamapps_dirs+=("$line")
+			done < "$cache_file"
 		fi
-	done < <(fd -t d -H '^steamapps$' / 2>/dev/null | while IFS= read -r d; do
-		realpath "$d" 2>/dev/null
-	done | sort -u)
+	fi
 
 	if [[ ${#steamapps_dirs[@]} -eq 0 ]]; then
-		echo "No steamapps directories found."
-		exit 1
+		if ! command -v fd &>/dev/null; then
+			echo "ERROR: fd is not installed. Install it to use auto-detect mode."
+			echo "  Arch: sudo pacman -S fd"
+			echo "  Ubuntu/Debian: sudo apt install fd-find"
+			exit 1
+		fi
+
+		echo "Searching for steamapps directories..."
+		echo
+
+		while IFS= read -r dir; do
+			if [[ -d "$dir/compatdata" ]] && [[ -d "$dir/common" ]]; then
+				steamapps_dirs+=("$dir")
+			fi
+		done < <(fd -t d -H '^steamapps$' / 2>/dev/null | while IFS= read -r d; do
+			realpath "$d" 2>/dev/null
+		done | sort -u)
+
+		if [[ ${#steamapps_dirs[@]} -eq 0 ]]; then
+			echo "No steamapps directories found."
+			exit 1
+		fi
+
+		mkdir -p "$(dirname "$cache_file")"
+		printf '%s\n' "${steamapps_dirs[@]}" > "$cache_file"
+		echo "Saved to cache: $cache_file"
+		echo
 	fi
 
 	echo "Found ${#steamapps_dirs[@]} steamapps directory(s):"
